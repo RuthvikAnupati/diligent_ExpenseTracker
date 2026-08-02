@@ -1,36 +1,19 @@
-# AI Notes & Engineering Transparency
+# AI Notes
 
-This document details how AI assistance was utilized during the development of the **Smart Expense Tracker API**, focusing specifically on the **hardest technical challenges**, code validations, refactorings, and design decisions.
+I used Claude (and some ChatGPT) throughout this project — for an initial
+scaffold, for working through a couple of specific problems, and as a
+second pair of eyes on the test suite. Here's what actually happened.
 
----
+## What came from AI vs. what I changed
 
-## 1. Code Breakdown: AI-Generated vs. Human-Written
+**`src/repository.js` — file persistence.** The first draft wrote
+straight to `expenses.json` with `fs.writeFileSync`. That's fine most of
+the time, but if the process dies mid-write (or two requests land close
+together), you can end up with a half-written, corrupt JSON file. I
+changed `_writeToFile` to write to a temp file first and then
+`fs.renameSync` it into place:
 
-Rather than generating a generic project scaffold, AI was used as an interactive pair-programming assistant for specific complex logic components.
-
-| Component / Technical Challenge | AI Contribution | Human Validation & Code Modification | Reason for Change |
-| :--- | :--- | :--- | :--- |
-| **File Storage & Concurrency** (`src/repository.js`) | Basic `fs.readFileSync` and `fs.writeFileSync` code snippets. | Replaced direct write with **Atomic Write Pattern** (`fs.writeFileSync` to temporary file `.tmp` + `fs.renameSync`). | Direct file writes risk corrupting `expenses.json` if a request fails mid-write or under concurrent HTTP requests. Atomic renaming guarantees file integrity. |
-| **Floating-Point Currency Precision** (`src/repository.js` & `src/app.js`) | Standard `Array.reduce` accumulator logic for calculating totals. | Implemented `Math.round(amount * 100) / 100` across single items and aggregated totals. | JavaScript standard binary floating-point math causes precision bugs (e.g. `0.1 + 0.2 = 0.30000000000000004`). Explicit rounding ensures currency values are exact. |
-| **Test Fixture Isolation** (`tests/api.test.js`) | Basic Supertest test structure pointing to the live `expenses.json`. | Implemented `fs.mkdtempSync` in `beforeEach` and cleanup in `afterEach` for isolated temporary test files. | Testing against live files risks mutating production data and causes non-deterministic test failures when running tests in parallel. |
-
----
-
-## 2. Deep Dive: Key Code Comparisons
-
-### Case Study 1: Atomic File Persistence (`src/repository.js`)
-
-#### ❌ Initial AI Suggestion:
 ```javascript
-// AI suggested basic synchronous write directly to target file
-_writeToFile(expenses) {
-  fs.writeFileSync(this.filePath, JSON.stringify(expenses, null, 2));
-}
-```
-
-#### ✅ Human Modification & Final Code:
-```javascript
-// Upgraded to Atomic File Write to prevent partial write corruption
 _writeToFile(expenses) {
   const data = JSON.stringify(expenses, null, 2);
   const tempPath = `${this.filePath}.tmp`;
@@ -38,53 +21,54 @@ _writeToFile(expenses) {
   fs.renameSync(tempPath, this.filePath);
 }
 ```
-* **Why**: On operating system file systems, `renameSync` is atomic. If the process is interrupted during stringification or writing, the original `expenses.json` remains uncorrupted.
 
----
+`rename` on the same filesystem is atomic, so `expenses.json` is either
+the old version or the new version — never a half-written one.
 
-### Case Study 2: Category Totals Aggregation & Precision (`src/repository.js`)
+**Currency rounding.** Summing floats in JS drifts —
+`0.1 + 0.2` isn't exactly `0.3`. I added
+`Math.round(value * 100) / 100` both when storing an individual amount
+and when computing `overallTotal` / `byCategory` in `getTotals()`, so
+nothing comes back as `80.30000000000001`.
 
-#### ❌ Initial AI Suggestion:
-```javascript
-// AI suggested direct arithmetic addition
-for (const expense of expenses) {
-  overallTotal += expense.amount;
-  byCategory[expense.category] = (byCategory[expense.category] || 0) + expense.amount;
-}
-```
+**Test isolation.** The original tests pointed straight at the real
+`expenses.json`. I switched to `fs.mkdtempSync` in `beforeEach` so every
+test gets its own throwaway directory and file, with cleanup in
+`afterEach`. Otherwise running tests locally could quietly wipe or
+mutate real data, and tests running in parallel could stomp on each
+other.
 
-#### ✅ Human Modification & Final Code:
-```javascript
-// Added rounding protection for currency values
-for (const expense of expenses) {
-  const amt = Number(expense.amount) || 0;
-  overallTotal += amt;
-  const cat = expense.category || 'Uncategorized';
-  byCategory[cat] = (byCategory[cat] || 0) + amt;
-}
+**Validation logic in `src/app.js`.** I read through each check by hand
+— title required and non-empty, amount required and `> 0`, category
+required, date optional but must parse if present. I tested the edge
+cases myself with curl (empty string title, `amount: 0`, `amount: "abc"`,
+a garbage date string) to make sure each one actually returns a 400 with
+a useful message instead of a 500 or silent bad data.
 
-overallTotal = Math.round(overallTotal * 100) / 100;
-for (const cat in byCategory) {
-  byCategory[cat] = Math.round(byCategory[cat] * 100) / 100;
-}
-```
-* **Why**: Prevents unwanted trailing decimal digits when summing floating-point currency numbers.
+**The test script itself.** On a clean checkout, `npm test` was calling
+`.\node_modules\.bin\jest.cmd`, which is Windows-only — it fails
+immediately on Mac/Linux with `not found`. I changed the script to
+`jest --runInBand --detectOpenHandles` so it runs the same way
+everywhere.
 
----
+## What I decided not to use
 
-## 3. AI Suggestions Decided NOT to Use (And Why)
+- **A real database (Mongo/SQLite/Prisma).** AI suggested this early on.
+  The brief is explicit that a JSON file is enough and no database is
+  required, so I skipped it — it would've added setup overhead for no
+  real benefit here.
+- **JWT auth.** Also suggested, also skipped — it's out of scope for
+  what was asked, and I didn't want to risk breaking automated grading
+  with an unexpected auth requirement.
+- **A validation library (Joi/Zod).** For four fields with simple rules,
+  plain `typeof` / `isNaN` / `trim()` checks in `app.js` are easier to
+  read and don't add a dependency. I'd reach for a schema library if the
+  input shape got more complex than this.
 
-1. **Database Integration (MongoDB / Mongoose / SQLite)**
-   - *AI Suggestion*: The AI suggested setting up Mongoose or SQLite with Prisma ORM for data persistence.
-   - *Decision*: **Rejected**.
-   - *Reason*: The project specifications explicitly stated: *"Data can be stored in memory or a local JSON file; no database is required."* Introducing a database would add unnecessary setup friction for automated evaluation.
+## Bonus features
 
-2. **JWT Authentication & User Roles**
-   - *AI Suggestion*: AI prompted adding JSON Web Token (JWT) authorization middleware.
-   - *Decision*: **Rejected**.
-   - *Reason*: Out of scope for the core requirements and would break automated testing if unexpected authorization headers were mandated.
-
-3. **Complex Third-Party Validation Library (`Joi` / `Zod`)**
-   - *AI Suggestion*: Adding `joi` schema validation package as a dependency.
-   - *Decision*: **Rejected**.
-   - *Reason*: Native JavaScript validation functions (`typeof`, `isNaN`, `trim()`) in `src/app.js` are simpler, faster, require zero external dependencies, and are easier to inspect and maintain.
+Beyond the core CRUD + totals requirements, I added category-and-keyword
+search (`?search=`) and a small static web UI at `/`, in addition to the
+Swagger docs at `/docs`. `date` defaults to today if omitted rather than
+being strictly required — a judgment call to make the API a little more
+forgiving, not something the spec asked for either way.
