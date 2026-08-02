@@ -1,0 +1,23 @@
+{
+  "name": "smart-expense-tracker-api",
+  "version": "1.0.0",
+  "description": "REST API for managing personal expenses with local JSON storage, automated tests, and Swagger docs.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": ".\\node_modules\\.bin\\jest.cmd --runInBand --detectOpenHandles"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}
