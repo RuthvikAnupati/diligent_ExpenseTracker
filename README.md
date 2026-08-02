@@ -87,7 +87,7 @@ npm test
 ## Project Structure
 
 ```
-your-repo/
+diligent_ExpenseTracker/
   README.md        # Installation, server startup, and testing instructions
   AI_NOTES.md      # Transparent AI usage notes, code comparisons, and technical validation
   package.json     # Node.js dependencies and script definitions
